@@ -1,6 +1,7 @@
 ﻿using CommandLine;
 using CommandLine.Text;
 using Dapper;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -17,8 +18,6 @@ namespace SqlQueryExecutor
 {
     class Program
     {
-        public static int executionsInTheLastCycle = 0;
-
         static void Main(string[] args)
         {
             if (!Parser.Default.ParseArguments(args, AppContext.Options))
@@ -28,11 +27,64 @@ namespace SqlQueryExecutor
                 return;
             }
 
-            InitializeApplicationContext();
+            if(AppContext.Options.Processes == 1)
+            {
+                InitializeApplicationContext();
 
-            StartQueries();
+                StartThreads();
 
-            MonitorQueries();
+                MonitorThreads();
+            }
+            else
+            {
+                var filesToDelete = Directory.GetFiles(".", "*.output");
+                foreach (var file in filesToDelete)
+                {
+                    File.Delete(file);
+                }
+
+                for (int i = 0; i < AppContext.Options.Processes; i++)
+                {
+                    var p = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "sqlqueryexecutor.exe",
+                        Arguments = $"-t {AppContext.Options.Threads} -d {AppContext.Options.Db} -c {AppContext.Options.ConnectionPooling}",
+                    });
+                }
+
+                Thread.Sleep(5000); // Esperamos un pelin que se rellenen los datos del primer ciclo
+
+                while (true)
+                {
+                    Console.Title = "Main process controller";
+                    try
+                    {
+                        Thread.Sleep(1000);
+                        Console.Clear();
+                        Console.WriteLine("Main process controller");
+                        var filesToRead = Directory.GetFiles(".", "*.output");
+                        var resultsFromAllProcesses = new List<OutputData>();
+                        foreach (var file in filesToRead)
+                        {
+                            resultsFromAllProcesses.Add(JsonConvert.DeserializeObject<OutputData>(File.ReadAllText(file)));
+                        }
+
+                        Console.WriteLine($"Database: {AppContext.DatabaseName}");
+                        Console.WriteLine($"Total Processes: {AppContext.Options.Processes}");
+                        Console.WriteLine($"Pooling: {AppContext.Options.ConnectionPooling}");
+                        Console.WriteLine($"Avg Elapsed Miliseconds per execution: {resultsFromAllProcesses.Average(d => d.AvgElapsed)}");
+                        var executionsPerSecond = resultsFromAllProcesses.Sum(d => d.ExecutionsInLastCycle);
+                        Console.WriteLine($"Executions per sec: {executionsPerSecond}");
+                        Console.WriteLine($"Executions per Thread per sec: {(1.0 * executionsPerSecond / resultsFromAllProcesses.Count)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        File.AppendAllText("error.log", ex.ToString());
+                    }
+                }
+
+                //process.StandardInput.Write()
+            }
         }
 
         private static void InitializeApplicationContext()
@@ -46,7 +98,7 @@ namespace SqlQueryExecutor
             AppContext.DatabaseName = connStringBuilder.InitialCatalog;
         }
 
-        private static void StartQueries()
+        private static void StartThreads()
         {
             for (int i = 0; i < AppContext.Options.Threads; i++)
             {
@@ -64,19 +116,27 @@ namespace SqlQueryExecutor
             }
         }
 
-        private static void MonitorQueries()
+        private static void MonitorThreads()
         {
+            var consoleOutputService = new ConsoleOutputService();
+            var jsonOutput = new JsonFileOutputService();
+
             while (true)
             {
-                Thread.Sleep(1000);
+                Thread.Sleep(AppContext.ThreadLoopWaitInMiliseconds);
                 Console.Clear();
-                Console.WriteLine($"Database: {AppContext.DatabaseName}");
-                Console.WriteLine($"Total Threads: {AppContext.QueryExecutors.Count}");
-                Console.WriteLine($"Pooling: {AppContext.Options.Pooling}");
-                Console.WriteLine($"Avg Elapsed Miliseconds per execution: {AppContext.QueryExecutors.Sum(e => e.LastElapsed.Milliseconds) / AppContext.QueryExecutors.Count}");
-                Console.WriteLine($"Executions per sec: {Program.executionsInTheLastCycle}");
-                Console.WriteLine($"Executions per Thread per sec: {(1.0 * Program.executionsInTheLastCycle / AppContext.Options.Threads)}");
-                Program.executionsInTheLastCycle = 0;
+
+                consoleOutputService.WriteOutput();
+                jsonOutput.WriteOutput();
+
+                //Console.WriteLine($"Database: {AppContext.DatabaseName}");
+                //Console.WriteLine($"Total Threads: {AppContext.QueryExecutors.Count}");
+                //Console.WriteLine($"Pooling: {AppContext.Options.ConnectionPooling}");
+                //Console.WriteLine($"Avg Elapsed Miliseconds per execution: {AppContext.QueryExecutors.Average(e => e.LastElapsed.Milliseconds)}");
+                //Console.WriteLine($"Executions per sec: {AppContext.ExecutionsInLastCycle}");
+                //Console.WriteLine($"Executions per Thread per sec: {(1.0 * AppContext.ExecutionsInLastCycle / AppContext.Options.Threads)}");
+
+                AppContext.ExecutionsInLastCycle = 0;
             }
         }
 
@@ -87,7 +147,7 @@ namespace SqlQueryExecutor
             if (string.IsNullOrEmpty(connString))
                 throw new Exception("ConnectionString not found");
 
-            if (AppContext.Options.Pooling != "on")
+            if (AppContext.Options.ConnectionPooling != "on")
             {
                 connString = $"{connString}Pooling=False;";
             }
@@ -104,14 +164,28 @@ namespace SqlQueryExecutor
         public static List<Task> Tasks { get; set; }
         public static ConcurrentBag<QueryExecutor> QueryExecutors { get; set; }
         public static string DatabaseName { get; set; }
+        // TODO: Acceder de manera thread safe http://stackoverflow.com/questions/13181740/c-sharp-thread-safe-fastest-counter
+        public static int ExecutionsInLastCycle { get; set; }
+        public const int ThreadLoopWaitInMiliseconds = 1000;
+
+        public static IOutputService GetOutputService()
+        {
+            if(Options.Processes == 1)
+            {
+                return new ConsoleOutputService();
+            }
+            return new JsonFileOutputService();
+        }
     }
 
     public class Options
     {
         [Option('d', "db", DefaultValue = "sftpre", HelpText = "Db Key en connectionstring")]
         public string Db { get; set; }
-        [Option('p', "pool", DefaultValue = "on", HelpText = "Pooling;Valores: on|off")]
-        public string Pooling { get; set; }
+        [Option('c', "conpool", DefaultValue = "on", HelpText = "Pooling;Valores: on|off")]
+        public string ConnectionPooling { get; set; }
+        [Option('p', "processes", DefaultValue = 1, HelpText = "Processes")]
+        public int Processes { get; set; }
         [Option('t', "theads", DefaultValue = 1, HelpText = "Threads")]
         public int Threads { get; set; }
     }
@@ -144,7 +218,7 @@ namespace SqlQueryExecutor
 
                     stopwatch.Stop();
                     this.LastElapsed = stopwatch.Elapsed;
-                    Program.executionsInTheLastCycle++;
+                    AppContext.ExecutionsInLastCycle++;
                 }
             }
             catch (Exception ex)
@@ -152,5 +226,44 @@ namespace SqlQueryExecutor
                 File.AppendAllText("errors.log", ex.ToString());
             }
         }
+    }
+
+    public interface IOutputService
+    {
+        void WriteOutput();
+    }
+
+    public class ConsoleOutputService : IOutputService
+    {
+        public void WriteOutput()
+        {
+            Console.Clear();
+            Console.WriteLine($"Database: {AppContext.DatabaseName}");
+            Console.WriteLine($"Total Threads: {AppContext.QueryExecutors.Count}");
+            Console.WriteLine($"Pooling: {AppContext.Options.ConnectionPooling}");
+            Console.WriteLine($"Avg Elapsed Miliseconds per execution: {AppContext.QueryExecutors.Sum(e => e.LastElapsed.Milliseconds) / AppContext.QueryExecutors.Count}");
+            Console.WriteLine($"Executions per sec: {AppContext.ExecutionsInLastCycle}");
+            Console.WriteLine($"Executions per Thread per sec: {(1.0 * AppContext.ExecutionsInLastCycle / AppContext.Options.Threads)}");
+        }
+    }
+
+    public class JsonFileOutputService : IOutputService
+    {
+        public void WriteOutput()
+        {
+            var outputJson = JsonConvert.SerializeObject(new OutputData
+            {
+                AvgElapsed = AppContext.QueryExecutors.Sum(e => e.LastElapsed.Milliseconds) / AppContext.QueryExecutors.Count,
+                ExecutionsInLastCycle = AppContext.ExecutionsInLastCycle
+            });
+
+            File.WriteAllText($"{Process.GetCurrentProcess().Id}.output", outputJson);
+        }
+    }
+
+    public class OutputData
+    {
+        public int AvgElapsed { get; set; }
+        public int ExecutionsInLastCycle { get; set; }
     }
 }
