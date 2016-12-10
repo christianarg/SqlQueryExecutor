@@ -88,14 +88,23 @@ namespace SqlQueryExecutor
         public void Start()
         { 
             this.CleanupOutputFilesFromPreviousExecutions();
+            
             for (int i = 0; i < AppController.Instance.Options.Processes; i++)
             {
-                var p = Process.Start(new ProcessStartInfo
+                var process = Process.Start(new ProcessStartInfo
                 {
                     FileName = "sqlqueryexecutor.exe",
                     Arguments = $"-t {AppController.Instance.Options.Threads} -d {AppController.Instance.Options.Db} -c {AppController.Instance.Options.ConnectionPooling}",
                 });
+                AppController.Instance.Processes.Add(process);
             }
+            Console.CancelKeyPress += new ConsoleCancelEventHandler(Console_CancelKeyPress);
+
+        }
+
+        private void Console_CancelKeyPress(object sender, ConsoleCancelEventArgs e)
+        {
+            AppController.Instance.Processes.ForEach(p => p.Kill());
         }
 
         public void Monitor()
@@ -135,10 +144,21 @@ namespace SqlQueryExecutor
             var resultsFromAllProcesses = new List<ResultData>();
             foreach (var file in filesToRead)
             {
-                resultsFromAllProcesses.Add(JsonConvert.DeserializeObject<ResultData>(File.ReadAllText(file)));
+                resultsFromAllProcesses.Add(JsonConvert.DeserializeObject<ResultData>(ReadResultFile(file)));
             }
 
             return resultsFromAllProcesses;
+        }
+
+        private static string ReadResultFile(string file)
+        {
+            using (FileStream logFileStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (StreamReader logFileReader = new StreamReader(logFileStream))
+            {
+                return logFileReader.ReadToEnd();
+            }
+
+            //return File.ReadAllText(file);
         }
 
         private void CleanupOutputFilesFromPreviousExecutions()
@@ -174,6 +194,7 @@ namespace SqlQueryExecutor
         public string Query { get; private set; }
         public string ConnectionString { get; private set; }
         public List<Task> Tasks { get; private set; }
+        public List<Process> Processes { get; private set; } = new List<Process>();
         public ConcurrentBag<QueryExecutor> QueryExecutors { get; private set; }
         public string DatabaseName { get; set; }
         // TODOer de manera thread safe http://stackoverflow.com/questions/13181740/c-sharp-thread-safe-fastest-counter
