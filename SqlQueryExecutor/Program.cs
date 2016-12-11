@@ -80,7 +80,7 @@ namespace SqlQueryExecutor
                 consoleOutputService.WriteOutput(result);
                 jsonOutput.WriteOutput(result);
 
-                AppController.Instance.ExecutionsInLastCycle = 0;
+                AppController.Instance.ResetExecutionsInLastCycle();
             }
         }
     }
@@ -123,6 +123,7 @@ namespace SqlQueryExecutor
 
                     Console.WriteLine($"Database: {AppController.Instance.DatabaseName}");
                     Console.WriteLine($"Total Processes: {AppController.Instance.Options.Processes}");
+                    Console.WriteLine($"Threads per Processes: {AppController.Instance.Options.Threads}");
                     Console.WriteLine($"Pooling: {AppController.Instance.Options.ConnectionPooling}");
                     Console.WriteLine($"Avg Elapsed Miliseconds per execution: {resultsFromAllProcesses.Average(d => d.AvgElapsed)}");
                     Console.WriteLine($"Max Elapsed Miliseconds per execution: {resultsFromAllProcesses.Max(d => d.MaxElapsed)}");
@@ -185,7 +186,7 @@ namespace SqlQueryExecutor
     public class AppController
     {
         private static AppController instance;
-        private AppController() { }
+        
         public static AppController Instance
         {
             get
@@ -204,14 +205,22 @@ namespace SqlQueryExecutor
         public ConcurrentBag<QueryExecutor> QueryExecutors { get; private set; }
         public string DatabaseName { get; set; }
         // TODOer de manera thread safe http://stackoverflow.com/questions/13181740/c-sharp-thread-safe-fastest-counter
-        public int ExecutionsInLastCycle { get; set; }
+        public int ExecutionsInLastCycle => executionsInLastCycle;
         public const int ThreadLoopWaitInMiliseconds = 1000;
+
+        private int executionsInLastCycle;
+
+        private AppController() { }
 
         public void Run()
         {
             Initialize();
             Start();
         }
+
+        public void IncrementExecutionsInLastCycle() => Interlocked.Increment(ref executionsInLastCycle);
+
+        public void ResetExecutionsInLastCycle() => Interlocked.Exchange(ref executionsInLastCycle, 0);
 
         private void Initialize()
         {
@@ -267,7 +276,6 @@ namespace SqlQueryExecutor
         }
     }
 
-
     public class Options
     {
         [Option('d', "db", DefaultValue = "sftpre", HelpText = "Db Key en connectionstring")]
@@ -308,7 +316,7 @@ namespace SqlQueryExecutor
 
                     stopwatch.Stop();
                     this.LastElapsed = stopwatch.Elapsed;
-                    AppController.Instance.ExecutionsInLastCycle++;
+                    AppController.Instance.IncrementExecutionsInLastCycle();
                 }
             }
             catch (Exception ex)
