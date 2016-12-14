@@ -241,7 +241,7 @@ namespace SqlQueryExecutor
             ThreadPool.SetMinThreads(this.Options.Threads, this.Options.Threads);
             this.ConnectionString = ConnectionStringFactory.GetConnString();
             this.DatabaseName = ConnectionStringFactory.GetDatabaseName();
-            this.Query = ConfigurationManager.AppSettings["query"];
+            this.Query = this.Options.Query ?? ConfigurationManager.AppSettings["query"];
             this.Tasks = new List<Task>(this.Options.Threads);
             this.QueryExecutors = new ConcurrentBag<QueryExecutor>();
         }
@@ -306,6 +306,8 @@ namespace SqlQueryExecutor
         public int Processes { get; set; }
         [Option('t', "theads", DefaultValue = 1, HelpText = "Threads")]
         public int Threads { get; set; }
+        [Option('q', "query", HelpText = "Query to execute. Alteratively you set an appsetting with key 'query' ")]
+        public string Query { get; set; }
     }
 
     public class QueryExecutor
