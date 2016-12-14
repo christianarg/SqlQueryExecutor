@@ -20,10 +20,12 @@ namespace SqlQueryExecutor
     {
         static void Main(string[] args)
         {
+            Debugger.Launch();
             if (!Parser.Default.ParseArguments(args, AppController.Instance.Options))
             {
                 // TODO: Mensaje amigable 
                 Console.WriteLine("Argumentos incorrectos");
+                Console.WriteLine(HelpText.AutoBuild(AppController.Instance.Options));
                 return;
             }
 
@@ -204,11 +206,10 @@ namespace SqlQueryExecutor
         public List<Process> Processes { get; private set; } = new List<Process>();
         public ConcurrentBag<QueryExecutor> QueryExecutors { get; private set; }
         public string DatabaseName { get; set; }
-        // TODOer de manera thread safe http://stackoverflow.com/questions/13181740/c-sharp-thread-safe-fastest-counter
+        private int executionsInLastCycle;
         public int ExecutionsInLastCycle => executionsInLastCycle;
         public const int ThreadLoopWaitInMiliseconds = 1000;
 
-        private int executionsInLastCycle;
 
         private AppController() { }
 
@@ -224,12 +225,13 @@ namespace SqlQueryExecutor
 
         private void Initialize()
         {
-            ThreadPool.SetMinThreads(AppController.Instance.Options.Threads, AppController.Instance.Options.Threads);
-            AppController.Instance.ConnectionString = ConnectionStringFactory.GetConnString();
-            AppController.Instance.DatabaseName = ConnectionStringFactory.GetDatabaseName();
-            AppController.Instance.Query = ConfigurationManager.AppSettings["query"];
-            AppController.Instance.Tasks = new List<Task>(AppController.Instance.Options.Threads);
-            AppController.Instance.QueryExecutors = new ConcurrentBag<QueryExecutor>();
+            // TODO: Esta línea debería ir en el Threads Service seguramente
+            ThreadPool.SetMinThreads(this.Options.Threads, this.Options.Threads);
+            this.ConnectionString = ConnectionStringFactory.GetConnString();
+            this.DatabaseName = ConnectionStringFactory.GetDatabaseName();
+            this.Query = ConfigurationManager.AppSettings["query"];
+            this.Tasks = new List<Task>(this.Options.Threads);
+            this.QueryExecutors = new ConcurrentBag<QueryExecutor>();
         }
 
         private void Start()
@@ -278,7 +280,7 @@ namespace SqlQueryExecutor
 
     public class Options
     {
-        [Option('d', "db", DefaultValue = "sftpre", HelpText = "Db Key en connectionstring")]
+        [Option('d', "db", Required = true, HelpText = "Db Key en connectionstring")]
         public string Db { get; set; }
         [Option('c', "conpool", DefaultValue = "on", HelpText = "Pooling;Valores: on|off")]
         public string ConnectionPooling { get; set; }
@@ -321,7 +323,7 @@ namespace SqlQueryExecutor
             }
             catch (Exception ex)
             {
-                File.AppendAllText("errors.log", ex.ToString());
+                File.AppendAllText("errors.log", $"Exception: {DateTime.Now.ToString()}:{ex.ToString()}{Environment.NewLine}");
             }
         }
     }
