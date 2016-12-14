@@ -20,15 +20,27 @@ namespace SqlQueryExecutor
     {
         static void Main(string[] args)
         {
-            Debugger.Launch();
             if (!Parser.Default.ParseArguments(args, AppController.Instance.Options))
             {
                 // TODO: Mensaje amigable 
-                Console.WriteLine("Argumentos incorrectos");
+                Console.WriteLine("Incorrect arguments");
                 Console.WriteLine(HelpText.AutoBuild(AppController.Instance.Options));
                 return;
             }
 
+            if(string.IsNullOrEmpty(AppController.Instance.Options.ConnectionString) && string.IsNullOrEmpty(AppController.Instance.Options.Db))
+            {
+                Console.WriteLine("You must specify -d or -s");
+                Console.WriteLine(HelpText.AutoBuild(AppController.Instance.Options));
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(AppController.Instance.Options.ConnectionString) && !string.IsNullOrEmpty(AppController.Instance.Options.Db))
+            {
+                Console.WriteLine("You can't specify -d AND -s together");
+                Console.WriteLine(HelpText.AutoBuild(AppController.Instance.Options));
+                return;
+            }
             AppController.Instance.Run();
         }
     }
@@ -257,6 +269,10 @@ namespace SqlQueryExecutor
         {
             public static string GetConnString()
             {
+                if (!string.IsNullOrEmpty(AppController.Instance.Options.ConnectionString))
+                {
+                    return AppController.Instance.Options.ConnectionString;
+                }
                 string connString = ConfigurationManager.ConnectionStrings[AppController.Instance.Options.Db.ToLower()].ConnectionString;
 
                 if (string.IsNullOrEmpty(connString))
@@ -280,7 +296,9 @@ namespace SqlQueryExecutor
 
     public class Options
     {
-        [Option('d', "db", Required = true, HelpText = "Db Key en connectionstring")]
+        [Option('s', "connstring", HelpText = "ConnectionString. Incompatible with -d ")]
+        public string ConnectionString { get; set; }
+        [Option('d', "db", HelpText = "name in  <connectionStrings> configuration file. Incompatible with -s")]
         public string Db { get; set; }
         [Option('c', "conpool", DefaultValue = "on", HelpText = "Pooling;Valores: on|off")]
         public string ConnectionPooling { get; set; }
